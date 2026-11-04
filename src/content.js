@@ -3,8 +3,8 @@
 // meanings.
 (() => {
   'use strict';
-  if (globalThis.__inklingLoaded) return;
-  globalThis.__inklingLoaded = true;
+  if (globalThis.__randomRedInkLoaded) return;
+  globalThis.__randomRedInkLoaded = true;
 
   const { createLookup, findMatches, LEVEL_COL } = globalThis.RC_MATCHER;
   const { loadSettings } = globalThis.RC_SETTINGS;
@@ -25,7 +25,7 @@
     'script', 'style', 'noscript', 'template', 'textarea', 'input', 'select', 'option', 'button',
     'code', 'pre', 'kbd', 'samp', 'var', 'svg', 'math', 'canvas', 'iframe', 'title', 'head',
     '[contenteditable]:not([contenteditable="false"])', '[translate="no"]', '.notranslate',
-    '.rc-word', '.rc-group', '#inkling-popover',
+    '.rc-word', '.rc-group', '#random-red-ink-popover',
   ].join(',');
 
   let settings = null;
@@ -384,7 +384,7 @@
     const level = dict.words[id][LEVEL_COL[ja ? 'jlpt' : settings.system]];
 
     const host = el('div');
-    host.id = 'inkling-popover';
+    host.id = 'random-red-ink-popover';
     const root = host.attachShadow({ mode: 'open' });
     const style = el('style');
     style.textContent = POPOVER_CSS;

@@ -1,6 +1,6 @@
-# Inkling
+# Random Red Ink
 
-Get an inkling of Chinese or Japanese while you browse. On English pages, this Chrome extension swaps a random share of words for their translation at your level: HSK for Chinese, JLPT for Japanese. Click a swapped word to see its reading and meanings and hear how it's pronounced.
+Learn Chinese or Japanese while you browse. On English pages, this Chrome extension swaps a random share of words for their translation at your level: HSK for Chinese, JLPT for Japanese. Click a swapped word to see its reading and meanings and hear how it's pronounced.
 
 > Today I want to 告诉 you about 我的 朋友. We like to 吃 rice and 喝 茶 in the morning.
 >
