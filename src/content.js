@@ -15,7 +15,7 @@
     'script', 'style', 'noscript', 'template', 'textarea', 'input', 'select', 'option', 'button',
     'code', 'pre', 'kbd', 'samp', 'var', 'svg', 'math', 'canvas', 'iframe', 'title', 'head',
     '[contenteditable]:not([contenteditable="false"])', '[translate="no"]', '.notranslate',
-    '.rc-word', '#random-chinese-popover',
+    '.rc-word', '.rc-group', '#random-chinese-popover',
   ].join(',');
 
   let settings = null;
@@ -84,6 +84,20 @@
     return span;
   }
 
+  // A single word, or a group of words reordered for Chinese grammar ("How I" -> "我 怎么"),
+  // which is restored to English as a whole.
+  function makeMatch(m, original) {
+    if (m.parts.length === 1) return makeWord(m.parts[0].id, original);
+    const group = document.createElement('span');
+    group.className = 'rc-group';
+    group.dataset.rcOrig = original;
+    m.parts.forEach((p, n) => {
+      if (n) group.append(' ');
+      group.append(p.text ?? makeWord(p.id, p.orig));
+    });
+    return group;
+  }
+
   function processTextNode(node) {
     scanned.add(node);
     if (!node.parentNode || count >= MAX_REPLACEMENTS) return;
@@ -101,7 +115,7 @@
     for (const m of matches) {
       if (count >= MAX_REPLACEMENTS) break;
       if (m.start > pos) piece(text.slice(pos, m.start));
-      frag.append(makeWord(m.id, text.slice(m.start, m.end)));
+      frag.append(makeMatch(m, text.slice(m.start, m.end)));
       pos = m.end;
       count++;
     }
@@ -148,7 +162,8 @@
           enqueue(r.target);
         } else {
           for (const n of r.addedNodes) {
-            if (!(n.nodeType === Node.ELEMENT_NODE && n.classList.contains('rc-word')) && !scanned.has(n)) enqueue(n);
+            const ours = n.nodeType === Node.ELEMENT_NODE && (n.classList.contains('rc-word') || n.classList.contains('rc-group'));
+            if (!ours && !scanned.has(n)) enqueue(n);
           }
         }
       }
@@ -162,15 +177,16 @@
     observer = null;
     queue.length = 0;
     closePopover();
-    for (const el of document.querySelectorAll('.rc-word')) restoreWord(el);
+    for (const el of document.querySelectorAll('.rc-group, .rc-word')) if (el.isConnected) restoreWord(el);
     count = 0;
     scanned = new WeakSet();
   }
 
   function restoreWord(el) {
-    const t = document.createTextNode(el.dataset.rcOrig);
+    const target = el.closest('.rc-group') || el;
+    const t = document.createTextNode(target.dataset.rcOrig);
     scanned.add(t);
-    el.replaceWith(t);
+    target.replaceWith(t);
   }
 
   let applying = 0;

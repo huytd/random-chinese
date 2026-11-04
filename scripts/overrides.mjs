@@ -75,6 +75,9 @@ export const OVERRIDES = {
   words: ['词', '话'],
   hills: ['山'],
   steps: ['步'],
+  leave: ['离开', '走'],
+  'how much': ['多少', '几'],
+  'how many': ['多少', '几'],
 };
 
 // Translations that are real senses but misleading out of context.

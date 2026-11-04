@@ -9,9 +9,21 @@ const { lemmas, createLookup, findMatches } = globalThis.RC_MATCHER;
 const hsk1 = createLookup(dict, { system: 'hsk3', level: 1, onlyLevel: false });
 const hsk6 = createLookup(dict, { system: 'hsk3', level: 6, onlyLevel: false });
 
-// [original text, simplified] for each match.
-const translate = (text, lookup = hsk1) =>
-  findMatches(text, lookup).map((m) => [text.slice(m.start, m.end), dict.words[m.id][0]]);
+// [original text, replacement] for each match; replacements of several words are
+// joined with spaces in the order they appear on the page.
+const render = (m) => m.parts.map((p) => p.text ?? dict.words[p.id][0]).join(' ');
+const translate = (text, lookup = hsk1) => findMatches(text, lookup).map((m) => [text.slice(m.start, m.end), render(m)]);
+
+// The whole text with every match replaced.
+const rewrite = (text, lookup = hsk6) => {
+  let out = '';
+  let pos = 0;
+  for (const m of findMatches(text, lookup)) {
+    out += text.slice(pos, m.start) + render(m);
+    pos = m.end;
+  }
+  return out + text.slice(pos);
+};
 
 test('dictionary rows are well formed', () => {
   assert.ok(dict.words.length > 10000);
@@ -86,4 +98,37 @@ test('HSK 2.0 levels are separate from HSK 3.0', () => {
   assert.deepEqual(translate('day', old1), [['day', '日']]);
   assert.deepEqual(translate('day', hsk1), [['day', '天']]);
   assert.deepEqual(translate('train station', old1), [['train station', '火车站']]);
+});
+
+test('how/why go after the subject, as in Chinese', () => {
+  assert.equal(rewrite('How I use AI?'), '我 怎么 用 AI?');
+  assert.equal(rewrite('How do I use AI?'), '我 怎么 用 AI?');
+  assert.equal(rewrite('How can I help you'), '我 怎么 can 帮助 你');
+  assert.equal(rewrite('Why are you sad?'), '你 为什么 难过?');
+  assert.equal(rewrite('Why did she leave?'), '她 为什么 离开?');
+  assert.equal(rewrite('I know why he left'), '我 知道 他 为什么 left');
+});
+
+test('how/why stay put where Chinese puts them first too', () => {
+  assert.equal(rewrite('How to cook rice'), '怎么 to 煮 米饭');
+  assert.equal(rewrite('why not'), '为什么 not');
+});
+
+test('how/why are left in English when the order can not be fixed', () => {
+  // "How are you" is 你好吗, and "how big" is 多大, not 怎么.
+  assert.equal(rewrite('How are you'), 'How are 你');
+  assert.equal(rewrite('how big'), 'how 大');
+  // A noun-phrase subject can't be moved reliably.
+  assert.equal(rewrite('How does the system work').startsWith('How does'), true);
+});
+
+test('set phrases beat the word-order rules', () => {
+  assert.deepEqual(translate('how much'), [['how much', '多少']]);
+});
+
+test('what/who are only used as a question subject', () => {
+  assert.equal(rewrite('Who wants tea?'), '谁 要 茶?');
+  // Object questions and relative pronouns stay in English.
+  assert.equal(rewrite('What do you want?'), 'What do 你 要?');
+  assert.equal(rewrite('the man who lives here').includes('谁'), false);
 });
