@@ -4,6 +4,14 @@ A Chrome extension for learning Chinese while you browse. On English pages it sw
 
 > Today I want to 告诉 you about my 朋友. We like to 吃 rice and 喝 茶 in the morning.
 
+With the extension on:
+
+<img width="1653" height="1258" alt="image" src="https://github.com/user-attachments/assets/f1a9b1a7-b846-48c5-9bdd-babc50e02f80" />
+
+With the extension off:
+
+<img width="1653" height="1258" alt="image" src="https://github.com/user-attachments/assets/577445c5-e56f-4fd2-b858-5a8d1e69a548" />
+
 ## Install
 
 1. Open `chrome://extensions` and turn on **Developer mode**.
