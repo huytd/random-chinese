@@ -8,6 +8,6 @@
     "build:dict": "node scripts/build-dict.mjs",
     "icons": "python3 scripts/make-icons.py",
     "test": "node --test test/*.test.mjs",
-    "pack": "rm -f random-chinese.zip && zip -qr random-chinese.zip manifest.json icons src -x '*.DS_Store'"
+    "pack": "rm -f random-chinese.zip && zip -qr random-chinese.zip manifest.json icons src vendor -x '*.DS_Store'"
   }
 }

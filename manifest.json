@@ -25,7 +25,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["src/dict.js", "src/matcher.js", "src/settings.js", "src/content.js"],
+      "js": ["vendor/compromise.js", "src/tagger.js", "src/dict.js", "src/matcher.js", "src/settings.js", "src/content.js"],
       "css": ["src/content.css"],
       "run_at": "document_idle"
     }
