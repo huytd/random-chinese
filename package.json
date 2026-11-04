@@ -1,5 +1,5 @@
 {
-  "name": "random-chinese",
+  "name": "inkling",
   "version": "0.1.0",
   "private": true,
   "description": "Chrome extension that swaps English words for Chinese (HSK) or Japanese (JLPT) words while you browse.",
@@ -10,6 +10,6 @@
     "build:ja": "node scripts/build-dict-ja.mjs",
     "icons": "python3 scripts/make-icons.py",
     "test": "node --test test/*.test.mjs",
-    "pack": "rm -f random-chinese.zip && zip -qr random-chinese.zip manifest.json icons src vendor -x '*.DS_Store'"
+    "pack": "rm -f inkling.zip && zip -qr inkling.zip manifest.json icons src vendor -x '*.DS_Store'"
   }
 }

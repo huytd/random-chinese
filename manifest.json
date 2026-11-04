@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Random Chinese",
-  "short_name": "Random Chinese",
+  "name": "Inkling: Chinese & Japanese while you browse",
+  "short_name": "Inkling",
   "version": "0.2.0",
   "description": "Learn Chinese or Japanese while you browse: swaps a few English words on every page for HSK or JLPT words at your level. Click one for the reading, audio and meaning.",
   "icons": {
@@ -11,7 +11,7 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_title": "Random Chinese",
+    "default_title": "Inkling",
     "default_popup": "src/popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
