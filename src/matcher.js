@@ -1,9 +1,11 @@
-// Finds English words and short phrases in text that have an HSK translation.
-// Loaded as a content script (sets globalThis.RC_MATCHER) and required by the tests.
+// Finds English words and short phrases in text that have an HSK translation, using
+// part-of-speech tags from src/tagger.js when given. Loaded as a content script (sets
+// globalThis.RC_MATCHER) and imported by the tests.
 (function (root) {
   'use strict';
 
-  const WORD_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+  // Accented letters are part of words, so "cafés" is one word and isn't matched as "caf".
+  const WORD_RE = /[A-Za-zÀ-ÖØ-öø-ÿ]+(?:['’][A-Za-zÀ-ÖØ-öø-ÿ]+)*/g;
   const MAX_PHRASE = 3;
   // Sentence-start capitals ("Today we...") may match lowercase keys; other capitals are
   // likely names ("Bill", "Rose") and only match proper-noun keys like "China".
@@ -18,9 +20,12 @@
 
   // Column of the level for each syllabus in a dictionary row.
   const LEVEL_COL = { hsk3: 3, hsk2: 4 };
+  // Dictionary slots (see scripts/build-dict.mjs); ANY when the part of speech is unknown.
+  const SLOT = { V: 0, N: 1, A: 2, F: 3, P: 4, ANY: -1 };
+  const ANY_ORDER = [SLOT.P, SLOT.V, SLOT.N, SLOT.A, SLOT.F];
 
-  // Base forms to try for an inflected word: books -> book, studies -> study,
-  // loved -> love, running -> run. Exact matches are always tried first.
+  // Base forms to try for an inflected word when there are no tags: books -> book,
+  // studies -> study, loved -> love, running -> run. Exact matches are always tried first.
   function lemmas(word) {
     const out = [];
     const add = (w) => { if (w.length >= 2 && !out.includes(w)) out.push(w); };
@@ -52,10 +57,8 @@
     const cache = new Map();
     const lexical = new Set(dict.lexical);
 
-    // Best translation the learner's level allows, or -1.
-    function pick(key) {
-      if (!Object.hasOwn(dict.index, key)) return -1; // also rules out "constructor" etc.
-      const ids = dict.index[key];
+    // Best translation in a list that the learner's level allows, or -1.
+    function first(ids) {
       for (const id of ids) {
         const l = dict.words[id][col];
         if (l > 0 && l <= level) {
@@ -67,26 +70,64 @@
       return -1;
     }
 
-    return function lookup(phrase, allowLower) {
-      const ck = phrase + (allowLower ? '\u0001' : '');
-      if (cache.has(ck)) return cache.get(ck);
-      let id = pick(phrase);
-      if (id < 0 && allowLower) {
-        const lower = phrase.toLowerCase();
-        if (lower !== phrase) id = pick(lower);
-        // "news" above the learner's level must not fall back to "new".
-        if (id < 0 && !lexical.has(lower)) {
-          const words = lower.split(' ');
-          const last = words.pop();
-          for (const base of lemmas(last)) {
-            id = pick([...words, base].join(' '));
-            if (id >= 0) break;
-          }
-        }
+    function pick(key, slot) {
+      if (!Object.hasOwn(dict.index, key)) return -1; // also rules out "constructor" etc.
+      const slots = dict.index[key];
+      if (slot !== SLOT.ANY) return slots[slot] ? first(slots[slot]) : -1;
+      for (const s of ANY_ORDER) {
+        const id = slots[s] ? first(slots[s]) : -1;
+        if (id >= 0) return id;
       }
+      return -1;
+    }
+
+    // word: as written; slot: its part of speech (SLOT.*); base: its base form from the
+    // tagger ("bought" -> "buy"), or null to guess one from the spelling; order: which
+    // forms to try, 'word' (word, then base), 'base' (base, then word) or 'plural' (the
+    // base only, unless the plural is a word of its own like "glasses").
+    function lookup(word, allowLower, slot = SLOT.ANY, base = null, order = 'word') {
+      const ck = `${word}|${allowLower ? 1 : 0}|${slot}|${base || ''}|${order}`;
+      if (cache.has(ck)) return cache.get(ck);
+      const lower = word.toLowerCase();
+      const exact = allowLower && lower !== word ? [word, lower] : [word];
+      // Verb inflections carry no meaning in Chinese, so verbs always may use their base
+      // form; other words not when it means something else: "news" is not "new".
+      const blocked = !allowLower || (slot !== SLOT.V && lexical.has(lower));
+      const bases = blocked ? [] : base ? [base] : lemmas(lower.split(' ').pop()).map((b) => lower.replace(/\S+$/, b));
+      let forms = [...exact, ...bases];
+      if (order === 'base') forms = [...new Set([...bases, ...exact])];
+      else if (order === 'plural' && bases.length) forms = bases;
+      let id = -1;
+      for (const f of forms) if ((id = pick(f, slot)) >= 0) break;
       cache.set(ck, id);
       return id;
+    }
+
+    // The id of an HSK word, for grammar rules that need a specific word (两 before a
+    // measure word).
+    let bySimplified = null;
+    lookup.word = (simplified) => {
+      bySimplified ||= new Map(dict.words.map((w, id) => [w[0], id]));
+      return bySimplified.get(simplified) ?? -1;
     };
+    lookup.allowed = (id) => id >= 0 && first([id]) === id;
+    lookup.hanzi = (id) => dict.words[id][0];
+    // The measure word for a noun, whatever the learner's level: "two cats" is 两只 even
+    // for a learner who doesn't know 猫 yet.
+    lookup.measure = (noun, base) => {
+      let c = '';
+      for (const key of [base, noun.toLowerCase(), noun]) {
+        const ids = key && Object.hasOwn(dict.index, key) && dict.index[key][SLOT.N];
+        const withMeasure = ids && ids.find((id) => dict.words[id][6]);
+        if (withMeasure !== undefined && withMeasure !== false) {
+          c = dict.words[withMeasure][6];
+          break;
+        }
+      }
+      c ||= '个';
+      return { suffix: c, suffixPinyin: dict.measure[c] || '' };
+    };
+    return lookup;
   }
 
   // Chinese leaves question words where the answer would go and keeps the subject first,
@@ -99,6 +140,9 @@
   const BE = new Set(['am', 'is', 'are', 'was', 'were']);
   const MODALS = new Set(['can', 'could', 'should', 'would', 'will', 'may', 'might', 'must', 'shall']);
   const SKIP = 'skip';
+
+  // Nouns that are really quantifiers in "a number of", "a lot of".
+  const QUANTITY_NOUNS = new Set(['number', 'lot', 'couple', 'variety', 'range', 'majority', 'bunch', 'series', 'total', 'handful', 'plenty', 'deal', 'kind', 'sort', 'type']);
 
   // Returns null when no rule applies, SKIP to leave tokens[i] in English, or a match
   // that replaces several tokens at once in Chinese order.
@@ -129,8 +173,10 @@
       word = at(++k); // "why are you sad" -> 你为什么难过
     }
     if (word && SUBJECTS.has(word)) {
-      const whId = lookup(tokens[i].word, allowLower);
-      const subjectId = lookup(tokens[k].word, true);
+      // 怎么/为什么 are pronouns in Chinese; the adverb slot has 如何 and the noun slot 方式.
+      let whId = lookup(tokens[i].word, allowLower, SLOT.F);
+      if (whId < 0) whId = lookup(tokens[i].word, allowLower, SLOT.A);
+      const subjectId = lookup(tokens[k].word, true, SLOT.F);
       if (whId < 0 || subjectId < 0) return null;
       const parts = [{ id: subjectId, orig: tokens[k].word }, { id: whId, orig: tokens[i].word }];
       if (modal) parts.push({ text: modal });
@@ -142,19 +188,97 @@
     return next === 'to' || next === 'not' || next === null ? null : SKIP;
   }
 
+  // Gives each token the tag that covers its first character.
+  function attachTags(tokens, tags) {
+    let t = 0;
+    for (const tok of tokens) {
+      while (t < tags.length && tags[t].end <= tok.start) t++;
+      if (t < tags.length && tags[t].start <= tok.start) tok.info = tags[t];
+    }
+  }
+
+  // A single word, or null to leave it in English.
+  function wordMatch(tokens, i, text, lookup, allowLower, clauseStart) {
+    const tok = tokens[i];
+    const info = tok.info;
+    if (!info) {
+      const id = lookup(tok.word, allowLower);
+      return id >= 0 ? { start: tok.start, end: tok.end, parts: [{ id, orig: tok.word }] } : null;
+    }
+    if (info.skip || info.name) return null;
+    const prev = i > 0 ? tokens[i - 1] : null;
+    const next = i + 1 < tokens.length && text.slice(tok.end, tokens[i + 1].start) === ' ' ? tokens[i + 1] : null;
+    const lower = tok.word.toLowerCase();
+    // "gave up" is not 给 + up.
+    if (info.slot === SLOT.V && next?.info?.particle) return null;
+    // Fixed expressions: "a number of", "get used to".
+    if (QUANTITY_NOUNS.has(lower) && /^an?$/i.test(prev?.word || '') && next?.word === 'of') return null;
+    if (lower === 'used' && next?.word === 'to') return null;
+    // Chinese puts time words before the verb (我今天吃米饭), so a "today" trailing a verb,
+    // object or adverb stays English; at the start of a clause, after the subject or in
+    // "one day", "in the morning" it reads fine.
+    const after = prev?.info;
+    if (info.date && !clauseStart && after && !after.subject && [SLOT.V, SLOT.N, SLOT.A].includes(after.slot)) return null;
+
+    // Verbs go by their base form ("works" -> work, not the noun "works" 著作), and plurals
+    // by their singular only, as their own dictionary entries list rarer senses (plants -> 工厂).
+    const order = info.slot === SLOT.V ? 'base' : info.slot === SLOT.N && info.plural ? 'plural' : 'word';
+    let id = lookup(tok.word, allowLower, info.slot, info.root, order);
+    // they/them/their: 他们 for people, 它们 for animals and things, and left in English
+    // when the tagger can't tell what they refer to.
+    if (info.human === null) return null;
+    if (info.human === false && id >= 0) {
+      const it = lookup.word('它们');
+      if (!lookup.allowed(it)) return null;
+      id = it;
+    }
+    // "Learning Chinese is hard": a gerund the tagger calls a noun may still only have a
+    // verb translation (学习), and a verb gerund a noun one ("cooking" 烹饪). Only the -ing
+    // form itself: "smoking" must not become the noun "smoke" (烟).
+    if (id < 0 && info.gerund) id = lookup(tok.word, allowLower, SLOT.N, tok.word.toLowerCase());
+    else if (id < 0 && tok.word.toLowerCase().endsWith('ing') && info.slot === SLOT.N) id = lookup(tok.word, allowLower, SLOT.V, null, 'base');
+    if (id < 0) return null;
+    const part = { id, orig: tok.word };
+
+    // "my friend" is 我的朋友, "people's lives" 人的生活.
+    if (info.possessive) Object.assign(part, { suffix: '的', suffixPinyin: 'de' });
+    // "highest" is 最高 and "better" 更好, unless the word already says so (最高, 更好).
+    if ((info.superlative || info.comparative) && info.slot === SLOT.A && !/^[最更较]/.test(lookup.hanzi(id))) {
+      Object.assign(part, info.superlative ? { prefix: '最', prefixPinyin: 'zuì' } : { prefix: '更', prefixPinyin: 'gèng' });
+    }
+    // "three books" is 三本书: a number before a noun takes that noun's measure word.
+    if (info.number) {
+      let k = i + 1;
+      const joined = (j) => j < tokens.length && text.slice(tokens[j - 1].end, tokens[j].start) === ' ';
+      if (joined(k) && tokens[k].info?.slot === SLOT.A) k++;
+      const noun = joined(k) && tokens[k].info?.noun && !tokens[k].info.date ? tokens[k] : null;
+      if (noun) {
+        Object.assign(part, lookup.measure(noun.word, noun.info.root));
+        if (lookup.word('二') === id && lookup.word('两') >= 0) part.id = lookup.word('两'); // 两本书, not 二本书
+      }
+    }
+    return { start: tok.start, end: tok.end, parts: [part] };
+  }
+
   // Returns [{ start, end, parts }] for non-overlapping matches, longest phrase first.
-  // parts lists what replaces text[start, end) in order: { id, orig } for a Chinese word
-  // (orig is the English it stands for) or { text } for English kept as is.
-  function findMatches(text, lookup) {
+  // parts lists what replaces text[start, end) in order: { id, orig, prefix?, suffix? }
+  // for a Chinese word (orig is the English it stands for; prefix and suffix are grammar the
+  // Chinese needs, like 最, 的 or a measure word, each with a ...Pinyin field) or { text }
+  // for English kept as is.
+  // tags: from RC_TAGGER.tag(text), or omitted to match by spelling alone.
+  function findMatches(text, lookup, tags) {
     const tokens = [];
     WORD_RE.lastIndex = 0;
     for (let m; (m = WORD_RE.exec(text)); ) tokens.push({ word: m[0].replace(/’/g, "'"), start: m.index, end: m.index + m[0].length });
+    if (tags) attachTags(tokens, tags);
 
     const matches = [];
     for (let i = 0; i < tokens.length; i++) {
       const first = tokens[i];
       // Acronyms (US, IT) are never the English word they spell, except "I".
       if (first.word.length > 1 && first.word === first.word.toUpperCase() && lookup(first.word, false) < 0) continue;
+      // Parts of hyphenated compounds: the "time" in full-time.
+      if (text[first.start - 1] === '-' || text[first.end] === '-') continue;
       const capitalized = /^[A-Z]/.test(first.word);
       const clauseStart = atClauseStart(text, first.start);
       const allowLower = !capitalized || clauseStart || first.word === 'I';
@@ -169,6 +293,9 @@
             i = tokens.findIndex((t) => t.end === rule.end);
             break;
           }
+          const single = wordMatch(tokens, i, text, lookup, allowLower, clauseStart);
+          if (single) matches.push(single);
+          break;
         }
         const span = tokens.slice(i, i + n);
         // Phrases only join words separated by a single space.
@@ -176,7 +303,11 @@
         // Inner words must be lowercase so "New York Times" doesn't become "new" + ...
         if (span.some((t, k) => k > 0 && /[A-Z]/.test(t.word))) continue;
         const phrase = span.map((t) => t.word).join(' ');
-        const id = lookup(phrase, allowLower);
+        // "took place" is "take place": phrases go by their first word's base form.
+        const root = span[0].info?.slot === SLOT.V && span[0].info.root !== span[0].word.toLowerCase()
+          ? [span[0].info.root, ...span.slice(1).map((t) => t.word)].join(' ')
+          : null;
+        const id = lookup(phrase, allowLower, tags ? SLOT.P : SLOT.ANY, root);
         if (id >= 0) {
           const end = span[n - 1].end;
           matches.push({ start: first.start, end, parts: [{ id, orig: text.slice(first.start, end) }] });
@@ -188,7 +319,7 @@
     return matches;
   }
 
-  const api = { lemmas, createLookup, findMatches, LEVEL_COL };
+  const api = { lemmas, createLookup, findMatches, LEVEL_COL, SLOT };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.RC_MATCHER = api;
 })(globalThis);

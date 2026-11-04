@@ -8,9 +8,18 @@
   const { createLookup, findMatches, LEVEL_COL } = globalThis.RC_MATCHER;
   const { loadSettings } = globalThis.RC_SETTINGS;
   const dict = globalThis.RC_DICT;
+  const tagger = globalThis.RC_TAGGER;
 
   const MAX_REPLACEMENTS = 400; // per page, keeps long pages readable and fast
   const CHUNK_MS = 12; // work per idle slice
+  const MAX_BLOCK_TEXT = 4000; // characters tagged together
+  // Text inside one of these is tagged as a unit, so "<b>Building</b> apps" still reads
+  // as a verb.
+  const BLOCK_TAGS = new Set([
+    'P', 'LI', 'DT', 'DD', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TD', 'TH', 'CAPTION', 'FIGCAPTION',
+    'BLOCKQUOTE', 'DIV', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'MAIN', 'ASIDE', 'NAV', 'SUMMARY',
+    'LABEL', 'BODY',
+  ]);
   const SKIP_SELECTOR = [
     'script', 'style', 'noscript', 'template', 'textarea', 'input', 'select', 'option', 'button',
     'code', 'pre', 'kbd', 'samp', 'var', 'svg', 'math', 'canvas', 'iframe', 'title', 'head',
@@ -64,18 +73,29 @@
     for (let n; (n = walker.nextNode()); ) out.push(n);
   }
 
-  function makeWord(id, original) {
-    const [simp, trad, pinyin] = dict.words[id];
-    const hanzi = settings.script === 'traditional' ? trad : simp;
+  // part: { id, orig, prefix?, suffix?, ...Pinyin } from findMatches; prefix and suffix are
+  // grammar the Chinese needs: 最/更 for superlatives and comparatives, 的 after a
+  // possessive, a measure word after a number.
+  function makeWord(part) {
+    const [simp, trad, pinyin] = dict.words[part.id];
+    const hanzi = (part.prefix || '') + (settings.script === 'traditional' ? trad : simp) + (part.suffix || '');
     const span = document.createElement('span');
     span.className = 'rc-word';
     span.lang = settings.script === 'traditional' ? 'zh-Hant' : 'zh-Hans';
-    span.dataset.rcId = id;
-    span.dataset.rcOrig = original;
+    span.dataset.rcId = part.id;
+    span.dataset.rcOrig = part.orig;
+    if (part.suffix) {
+      span.dataset.rcSuffix = part.suffix;
+      span.dataset.rcSuffixPinyin = part.suffixPinyin || '';
+    }
+    if (part.prefix) {
+      span.dataset.rcPrefix = part.prefix;
+      span.dataset.rcPrefixPinyin = part.prefixPinyin || '';
+    }
     if (settings.showPinyin) {
       const ruby = document.createElement('ruby');
       const rt = document.createElement('rt');
-      rt.textContent = pinyin;
+      rt.textContent = [part.prefixPinyin, pinyin, part.suffixPinyin].filter(Boolean).join(' ');
       ruby.append(hanzi, rt);
       span.append(ruby);
     } else {
@@ -87,22 +107,22 @@
   // A single word, or a group of words reordered for Chinese grammar ("How I" -> "我 怎么"),
   // which is restored to English as a whole.
   function makeMatch(m, original) {
-    if (m.parts.length === 1) return makeWord(m.parts[0].id, original);
+    if (m.parts.length === 1) return makeWord({ ...m.parts[0], orig: original });
     const group = document.createElement('span');
     group.className = 'rc-group';
     group.dataset.rcOrig = original;
     m.parts.forEach((p, n) => {
       if (n) group.append(' ');
-      group.append(p.text ?? makeWord(p.id, p.orig));
+      group.append(p.text ?? makeWord(p));
     });
     return group;
   }
 
-  function processTextNode(node) {
+  function processTextNode(node, tags) {
     scanned.add(node);
     if (!node.parentNode || count >= MAX_REPLACEMENTS) return;
     const text = node.nodeValue;
-    const matches = findMatches(text, lookup).filter(() => Math.random() * 100 < settings.frequency);
+    const matches = findMatches(text, lookup, tags).filter(() => Math.random() * 100 < settings.frequency);
     if (!matches.length) return;
 
     const frag = document.createDocumentFragment();
@@ -136,14 +156,63 @@
     processInSlices(nodes);
   }
 
+  function blockOf(node) {
+    let el = node.parentElement;
+    while (el && !BLOCK_TAGS.has(el.tagName)) el = el.parentElement;
+    return el;
+  }
+
+  // Runs of consecutive text nodes in the same block.
+  function groupByBlock(nodes) {
+    const groups = [];
+    let cur = null;
+    for (const node of nodes) {
+      const block = blockOf(node);
+      if (!cur || cur.block !== block || cur.length + node.nodeValue.length > MAX_BLOCK_TEXT) {
+        cur = { block, nodes: [], length: 0 };
+        groups.push(cur);
+      }
+      cur.nodes.push(node);
+      cur.length += node.nodeValue.length + 1;
+    }
+    return groups;
+  }
+
+  // Tags a block's text in one go and processes each of its text nodes with its share.
+  function processGroup(group) {
+    const texts = group.nodes.map((n) => n.nodeValue);
+    let tags = null;
+    try {
+      tags = tagger ? tagger.tag(texts.join(' ')) : null;
+    } catch {
+      tags = null; // matching by spelling alone still works
+    }
+    let offset = 0;
+    let t = 0;
+    group.nodes.forEach((node, k) => {
+      const end = offset + texts[k].length;
+      let mine;
+      if (tags) {
+        mine = [];
+        while (t < tags.length && tags[t].start < offset) t++;
+        for (let u = t; u < tags.length && tags[u].start < end; u++) {
+          if (tags[u].end <= end) mine.push({ ...tags[u], start: tags[u].start - offset, end: tags[u].end - offset });
+        }
+      }
+      processTextNode(node, mine);
+      offset = end + 1;
+    });
+  }
+
   function processInSlices(nodes) {
     const mine = run;
+    const groups = groupByBlock(nodes);
     let i = 0;
     const step = () => {
       if (!running || run !== mine) return;
       const until = performance.now() + CHUNK_MS;
-      while (i < nodes.length && performance.now() < until) processTextNode(nodes[i++]);
-      if (i < nodes.length && count < MAX_REPLACEMENTS) idle(step);
+      while (i < groups.length && performance.now() < until) processGroup(groups[i++]);
+      if (i < groups.length && count < MAX_REPLACEMENTS) idle(step);
     };
     step();
   }
@@ -228,6 +297,7 @@
     .badge { display: inline-block; margin-top: 8px; padding: 1px 8px; border-radius: 999px; background: var(--chip); color: var(--accent); font-size: 12px; font-weight: 600; }
     ol { margin: 8px 0 0; padding-left: 20px; }
     li { margin: 2px 0; }
+    .grammar { margin: 8px 0 0; padding: 6px 8px; border-radius: 8px; background: var(--chip); font-size: 13px; }
     .foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
     .foot b { color: var(--fg); font-weight: 600; }
     .show-en { margin-left: auto; border: none; background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 2px 0; }
@@ -261,21 +331,30 @@
     card.setAttribute('role', 'dialog');
     card.setAttribute('aria-label', `${hanzi} ${pinyin}`);
 
+    const suffix = word.dataset.rcSuffix || '';
+    const prefix = word.dataset.rcPrefix || '';
     const top = el('div', 'row');
-    const h = el('span', 'hanzi', hanzi);
+    const h = el('span', 'hanzi', prefix + hanzi + suffix);
     h.lang = traditional ? 'zh-Hant' : 'zh-Hans';
     top.append(h);
-    if (other !== hanzi) top.append(el('span', 'alt', other));
+    if (other !== hanzi) top.append(el('span', 'alt', prefix + other + suffix));
     const speak = el('button', 'speak');
     speak.type = 'button';
     speak.title = 'Listen';
     speak.setAttribute('aria-label', 'Listen to pronunciation');
     speak.innerHTML = SPEAKER_SVG;
-    speak.addEventListener('click', () => say(simp));
+    speak.addEventListener('click', () => say(prefix + simp + suffix));
     top.append(speak);
 
     const list = el('ol');
     for (const m of meanings.split(' | ')) list.append(el('li', null, m));
+    // Grammar the extension added: 我的 "my", 三本 "three (books)", 最高 "highest".
+    const english = word.dataset.rcOrig.toLowerCase();
+    let note = '';
+    if (suffix === '的') note = `的 ${word.dataset.rcSuffixPinyin} marks possession: ${hanzi}的 = “${english}”.`;
+    else if (suffix) note = `${suffix} ${word.dataset.rcSuffixPinyin} is the measure word Chinese puts between a number and this noun.`;
+    if (prefix) note = `${prefix} ${word.dataset.rcPrefixPinyin} means “${prefix === '最' ? 'most' : 'more'}”: ${prefix}${hanzi} = “${english}”.`;
+    const grammar = note ? el('p', 'grammar', note) : null;
 
     const foot = el('div', 'foot');
     const orig = el('span');
@@ -290,7 +369,8 @@
     foot.append(orig, showEn);
 
     const label = settings.system === 'hsk2' ? `HSK 2.0 · Level ${level}` : `HSK 3.0 · Level ${level === 7 ? '7–9' : level}`;
-    card.append(top, el('div', 'pinyin', pinyin), el('span', 'badge', label), list, foot);
+    const fullPinyin = [word.dataset.rcPrefixPinyin, pinyin, word.dataset.rcSuffixPinyin].filter(Boolean).join(' ');
+    card.append(top, el('div', 'pinyin', fullPinyin), el('span', 'badge', label), list, ...(grammar ? [grammar] : []), foot);
     root.append(style, card);
     document.documentElement.append(host);
     pop = { host, card, word };
