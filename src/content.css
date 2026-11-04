@@ -1,0 +1,30 @@
+/* Replaced words. Kept close to the surrounding text so pages stay readable. */
+.rc-word {
+  cursor: pointer;
+  color: inherit;
+  background: rgba(200, 64, 42, 0.1);
+  border-bottom: 1.5px dotted #c8402a;
+  border-radius: 3px;
+  padding: 0 1px;
+  text-decoration: none;
+  transition: background-color 120ms ease;
+}
+.rc-word:hover,
+.rc-word.rc-active {
+  background: rgba(200, 64, 42, 0.22);
+}
+.rc-word ruby {
+  ruby-position: over;
+}
+.rc-word rt {
+  font-size: 0.6em;
+  color: #c8402a;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+@media (prefers-color-scheme: dark) {
+  .rc-word { background: rgba(255, 122, 92, 0.16); border-bottom-color: #ff7a5c; }
+  .rc-word:hover, .rc-word.rc-active { background: rgba(255, 122, 92, 0.3); }
+  .rc-word rt { color: #ff7a5c; }
+}

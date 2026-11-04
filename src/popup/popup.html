@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Random Chinese</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../../icons/icon48.png" alt="" width="28" height="28">
+    <h1>Random Chinese</h1>
+    <label class="switch" title="Turn on or off everywhere">
+      <input type="checkbox" id="enabled">
+      <span aria-hidden="true"></span>
+      <span class="sr">Enabled</span>
+    </label>
+  </header>
+
+  <section class="site" id="site">
+    <div class="site-line">
+      <span id="site-host" class="host">This page</span>
+      <label class="switch small" title="Turn on or off for this site">
+        <input type="checkbox" id="site-enabled">
+        <span aria-hidden="true"></span>
+        <span class="sr">Enabled on this site</span>
+      </label>
+    </div>
+    <div class="site-line">
+      <span id="site-status" class="muted">Checking…</span>
+      <button type="button" id="reroll" class="link">Shuffle</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="label-row">
+      <h2>Level</h2>
+      <div class="seg" role="radiogroup" aria-label="HSK syllabus" id="system">
+        <button type="button" role="radio" data-value="hsk3">HSK 3.0</button>
+        <button type="button" role="radio" data-value="hsk2">HSK 2.0</button>
+      </div>
+    </div>
+    <div class="levels" role="radiogroup" aria-label="HSK level" id="levels"></div>
+    <p class="hint" id="level-hint"></p>
+    <label class="check">
+      <input type="checkbox" id="only-level">
+      Only words new at this level
+    </label>
+  </section>
+
+  <section>
+    <div class="label-row">
+      <h2><label for="frequency">Replace</label></h2>
+      <output id="frequency-value" for="frequency"></output>
+    </div>
+    <input type="range" id="frequency" min="1" max="100" step="1">
+    <div class="range-ends"><span>A few words</span><span>Most words</span></div>
+  </section>
+
+  <section>
+    <div class="label-row">
+      <h2>Characters</h2>
+      <div class="seg" role="radiogroup" aria-label="Characters" id="script">
+        <button type="button" role="radio" data-value="simplified">简体</button>
+        <button type="button" role="radio" data-value="traditional">繁體</button>
+      </div>
+    </div>
+    <label class="check">
+      <input type="checkbox" id="show-pinyin">
+      Show pinyin above words
+    </label>
+  </section>
+
+  <footer>Click a Chinese word on the page to hear it and see its meaning.</footer>
+
+  <script src="../settings.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

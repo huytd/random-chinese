@@ -1,0 +1,13 @@
+{
+  "name": "random-chinese",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that swaps English words for HSK Chinese while you browse.",
+  "type": "module",
+  "scripts": {
+    "build:dict": "node scripts/build-dict.mjs",
+    "icons": "python3 scripts/make-icons.py",
+    "test": "node --test test/*.test.mjs",
+    "pack": "rm -f random-chinese.zip && zip -qr random-chinese.zip manifest.json icons src -x '*.DS_Store'"
+  }
+}
