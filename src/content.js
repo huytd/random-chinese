@@ -1,5 +1,6 @@
-// Replaces a random share of English words on the page with their HSK Chinese
-// translation; clicking one opens a card with pinyin, audio and meanings.
+// Replaces a random share of English words on the page with their Chinese (HSK) or
+// Japanese (JLPT) translation; clicking one opens a card with the reading, audio and
+// meanings.
 (() => {
   'use strict';
   if (globalThis.__randomChineseLoaded) return;
@@ -7,7 +8,7 @@
 
   const { createLookup, findMatches, LEVEL_COL } = globalThis.RC_MATCHER;
   const { loadSettings } = globalThis.RC_SETTINGS;
-  const dict = globalThis.RC_DICT;
+  let dict = null; // RC_DICTS[language], injected on demand by the background worker
   const tagger = globalThis.RC_TAGGER;
 
   const MAX_REPLACEMENTS = 400; // per page, keeps long pages readable and fast
@@ -30,6 +31,7 @@
   let settings = null;
   let lookup = null;
   let scanned = new WeakSet(); // text nodes already considered
+  const created = new WeakSet(); // text nodes this script made, safe to merge back together
   let count = 0;
   let running = false;
   let run = 0; // bumped on every (re)start so stale work stops
@@ -76,12 +78,16 @@
   // part: { id, orig, prefix?, suffix?, ...Pinyin } from findMatches; prefix and suffix are
   // grammar the Chinese needs: 最/更 for superlatives and comparatives, 的 after a
   // possessive, a measure word after a number.
+  const traditional = () => dict.lang === 'zh' && settings.script === 'traditional';
+  const langTag = () => (dict.lang === 'ja' ? 'ja' : traditional() ? 'zh-Hant' : 'zh-Hans');
+
   function makeWord(part) {
     const [simp, trad, pinyin] = dict.words[part.id];
-    const hanzi = (part.prefix || '') + (settings.script === 'traditional' ? trad : simp) + (part.suffix || '');
+    const word = traditional() ? trad : simp;
+    const hanzi = (part.prefix || '') + word + (part.suffix || '');
     const span = document.createElement('span');
     span.className = 'rc-word';
-    span.lang = settings.script === 'traditional' ? 'zh-Hant' : 'zh-Hans';
+    span.lang = langTag();
     span.dataset.rcId = part.id;
     span.dataset.rcOrig = part.orig;
     if (part.suffix) {
@@ -92,16 +98,41 @@
       span.dataset.rcPrefix = part.prefix;
       span.dataset.rcPrefixPinyin = part.prefixPinyin || '';
     }
-    if (settings.showPinyin) {
-      const ruby = document.createElement('ruby');
-      const rt = document.createElement('rt');
-      rt.textContent = [part.prefixPinyin, pinyin, part.suffixPinyin].filter(Boolean).join(' ');
-      ruby.append(hanzi, rt);
-      span.append(ruby);
+    // Readings above the word: pinyin over the whole word, or furigana over just the
+    // kanji of a Japanese word: 食(た)べる, お茶(ちゃ), 私(わたし)の.
+    if (settings.showPinyin && pinyin !== word) {
+      if (dict.lang === 'ja') {
+        span.append(...furigana(part.prefix || '', part.prefixPinyin || ''), ...furigana(word, pinyin), part.suffix || '');
+      } else {
+        span.append(ruby(hanzi, [part.prefixPinyin, pinyin, part.suffixPinyin].filter(Boolean).join(' ')));
+      }
     } else {
       span.textContent = hanzi;
     }
     return span;
+  }
+
+  function ruby(base, reading) {
+    const r = document.createElement('ruby');
+    const rt = document.createElement('rt');
+    rt.textContent = reading;
+    r.append(base, rt);
+    return r;
+  }
+
+  // Nodes for a Japanese word with its reading over the kanji only: the kana it starts and
+  // ends with (お茶 おちゃ, 食べる たべる) are already the reading, so they go without.
+  const kana = (c) => /[\p{Script=Hiragana}\p{Script=Katakana}ー]/u.test(c);
+  function furigana(word, reading) {
+    if (!word) return [];
+    if (word === reading || ![...word].some((c) => !kana(c))) return [word];
+    let pre = 0;
+    while (pre < word.length && kana(word[pre]) && word[pre] === reading[pre]) pre++;
+    let suf = 0;
+    while (suf < word.length - pre && kana(word[word.length - 1 - suf]) && word[word.length - 1 - suf] === reading[reading.length - 1 - suf]) suf++;
+    const core = word.slice(pre, word.length - suf);
+    const coreReading = reading.slice(pre, reading.length - suf);
+    return [word.slice(0, pre), ruby(core, coreReading), word.slice(word.length - suf)].filter((n) => n !== '');
   }
 
   // A single word, or a group of words reordered for Chinese grammar ("How I" -> "我 怎么"),
@@ -129,6 +160,7 @@
     const piece = (s) => {
       const t = document.createTextNode(s);
       scanned.add(t);
+      created.add(t);
       frag.append(t);
     };
     let pos = 0;
@@ -222,7 +254,8 @@
   function start() {
     running = true;
     run++;
-    lookup = createLookup(dict, settings);
+    const ja = settings.language === 'ja';
+    lookup = createLookup(dict, { system: ja ? 'jlpt' : settings.system, level: ja ? settings.jlptLevel : settings.level, onlyLevel: settings.onlyLevel });
     enqueue(document.body);
     observer = new MutationObserver((records) => {
       for (const r of records) {
@@ -251,21 +284,49 @@
     scanned = new WeakSet();
   }
 
+  // Puts the English back, merged with the neighbouring text this script split off, so a
+  // later pass sees "every day" as one phrase again. The page's own text nodes are left
+  // alone, as frameworks may hold on to them.
   function restoreWord(el) {
     const target = el.closest('.rc-group') || el;
     const t = document.createTextNode(target.dataset.rcOrig);
-    scanned.add(t);
     target.replaceWith(t);
+    for (const side of ['previousSibling', 'nextSibling']) {
+      const n = t[side];
+      if (n && n.nodeType === Node.TEXT_NODE && created.has(n)) {
+        t.nodeValue = side === 'previousSibling' ? n.nodeValue + t.nodeValue : t.nodeValue + n.nodeValue;
+        n.remove();
+      }
+    }
+    scanned.add(t);
+    created.add(t);
+  }
+
+  // The dictionary for a language, which the background worker injects into this page the
+  // first time it's needed (each is over a megabyte, so only the chosen one is loaded).
+  async function loadDict(lang) {
+    if (!globalThis.RC_DICTS?.[lang]) {
+      const res = await chrome.runtime.sendMessage({ type: 'rc-load-dict', lang });
+      if (!res?.ok) throw new Error(`could not load the ${lang} dictionary`);
+    }
+    return globalThis.RC_DICTS[lang];
   }
 
   let applying = 0;
   async function apply() {
     const mine = ++applying;
     const next = await loadSettings();
+    let nextDict = null;
+    try {
+      if (shouldRun(next) && document.body) nextDict = await loadDict(next.language);
+    } catch {
+      nextDict = null; // the extension was reloaded or the page can't be scripted
+    }
     if (mine !== applying) return; // a newer change superseded this one
     stop();
     settings = next;
-    if (shouldRun(settings) && document.body) start();
+    dict = nextDict;
+    if (dict) start();
   }
 
   // ---- Popover ---------------------------------------------------------------
@@ -316,11 +377,11 @@
   function showPopover(word) {
     closePopover();
     const id = Number(word.dataset.rcId);
-    const [simp, trad, pinyin, hsk3, hsk2, meanings] = dict.words[id];
-    const traditional = settings.script === 'traditional';
-    const hanzi = traditional ? trad : simp;
-    const other = traditional ? simp : trad;
-    const level = dict.words[id][LEVEL_COL[settings.system]];
+    const [simp, trad, pinyin, , , meanings] = dict.words[id];
+    const ja = dict.lang === 'ja';
+    const hanzi = traditional() ? trad : simp;
+    const other = traditional() ? simp : trad;
+    const level = dict.words[id][LEVEL_COL[ja ? 'jlpt' : settings.system]];
 
     const host = el('div');
     host.id = 'random-chinese-popover';
@@ -335,7 +396,7 @@
     const prefix = word.dataset.rcPrefix || '';
     const top = el('div', 'row');
     const h = el('span', 'hanzi', prefix + hanzi + suffix);
-    h.lang = traditional ? 'zh-Hant' : 'zh-Hans';
+    h.lang = langTag();
     top.append(h);
     if (other !== hanzi) top.append(el('span', 'alt', prefix + other + suffix));
     const speak = el('button', 'speak');
@@ -348,12 +409,14 @@
 
     const list = el('ol');
     for (const m of meanings.split(' | ')) list.append(el('li', null, m));
-    // Grammar the extension added: 我的 "my", 三本 "three (books)", 最高 "highest".
+    // Grammar the extension added: 我的 / 私の "my", 三本 "three (books)", 最高 / 一番高い
+    // "highest".
     const english = word.dataset.rcOrig.toLowerCase();
+    const { grammar: g } = dict;
     let note = '';
-    if (suffix === '的') note = `的 ${word.dataset.rcSuffixPinyin} marks possession: ${hanzi}的 = “${english}”.`;
+    if (suffix === g.possessive[0]) note = `${suffix} ${word.dataset.rcSuffixPinyin} marks possession: ${hanzi}${suffix} = “${english}”.`;
     else if (suffix) note = `${suffix} ${word.dataset.rcSuffixPinyin} is the measure word Chinese puts between a number and this noun.`;
-    if (prefix) note = `${prefix} ${word.dataset.rcPrefixPinyin} means “${prefix === '最' ? 'most' : 'more'}”: ${prefix}${hanzi} = “${english}”.`;
+    if (prefix) note = `${prefix} ${word.dataset.rcPrefixPinyin} means “${prefix === g.most[0] ? 'most' : 'more'}”: ${prefix}${hanzi} = “${english}”.`;
     const grammar = note ? el('p', 'grammar', note) : null;
 
     const foot = el('div', 'foot');
@@ -368,7 +431,7 @@
     });
     foot.append(orig, showEn);
 
-    const label = settings.system === 'hsk2' ? `HSK 2.0 · Level ${level}` : `HSK 3.0 · Level ${level === 7 ? '7–9' : level}`;
+    const label = ja ? `JLPT N${6 - level}` : settings.system === 'hsk2' ? `HSK 2.0 · Level ${level}` : `HSK 3.0 · Level ${level === 7 ? '7–9' : level}`;
     const fullPinyin = [word.dataset.rcPrefixPinyin, pinyin, word.dataset.rcSuffixPinyin].filter(Boolean).join(' ');
     card.append(top, el('div', 'pinyin', fullPinyin), el('span', 'badge', label), list, ...(grammar ? [grammar] : []), foot);
     root.append(style, card);
@@ -402,23 +465,25 @@
   }
 
   function say(text) {
+    const lang = dict.speech;
     try {
-      chrome.runtime.sendMessage({ type: 'rc-speak', text })
-        .then((res) => { if (!res?.ok) speakInPage(text); })
-        .catch(() => speakInPage(text));
+      chrome.runtime.sendMessage({ type: 'rc-speak', text, lang })
+        .then((res) => { if (!res?.ok) speakInPage(text, lang); })
+        .catch(() => speakInPage(text, lang));
     } catch {
-      speakInPage(text); // the extension was reloaded since this page loaded
+      speakInPage(text, lang); // the extension was reloaded since this page loaded
     }
   }
 
-  // Fallback when the extension's TTS is unavailable.
-  function speakInPage(text) {
+  // Fallback when the extension's TTS is unavailable. lang: 'zh-CN' or 'ja-JP'.
+  function speakInPage(text, lang) {
     if (!window.speechSynthesis) return;
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'zh-CN';
+    u.lang = lang;
     u.rate = 0.8;
     const voices = speechSynthesis.getVoices();
-    u.voice = voices.find((v) => /^zh[-_]CN/i.test(v.lang)) || voices.find((v) => v.lang.startsWith('zh')) || null;
+    const base = lang.slice(0, 2);
+    u.voice = voices.find((v) => v.lang.replace('_', '-').toLowerCase() === lang.toLowerCase()) || voices.find((v) => v.lang.startsWith(base)) || null;
     speechSynthesis.cancel();
     speechSynthesis.speak(u);
   }

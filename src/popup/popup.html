@@ -33,6 +33,16 @@
 
   <section>
     <div class="label-row">
+      <h2>Learn</h2>
+      <div class="seg" role="radiogroup" aria-label="Language" id="language">
+        <button type="button" role="radio" data-value="zh" lang="zh">中文 Chinese</button>
+        <button type="button" role="radio" data-value="ja" lang="ja">日本語 Japanese</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="label-row">
       <h2>Level</h2>
       <div class="seg" role="radiogroup" aria-label="HSK syllabus" id="system">
         <button type="button" role="radio" data-value="hsk3">HSK 3.0</button>
@@ -57,7 +67,7 @@
   </section>
 
   <section>
-    <div class="label-row">
+    <div class="label-row" id="script-row">
       <h2>Characters</h2>
       <div class="seg" role="radiogroup" aria-label="Characters" id="script">
         <button type="button" role="radio" data-value="simplified">简体</button>
@@ -66,11 +76,11 @@
     </div>
     <label class="check">
       <input type="checkbox" id="show-pinyin">
-      Show pinyin above words
+      <span id="reading-label">Show pinyin above words</span>
     </label>
   </section>
 
-  <footer>Click a Chinese word on the page to hear it and see its meaning.</footer>
+  <footer id="footer">Click a Chinese word on the page to hear it and see its meaning.</footer>
 
   <script src="../settings.js"></script>
   <script src="popup.js"></script>

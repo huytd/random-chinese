@@ -19,7 +19,7 @@
   }
 
   // Column of the level for each syllabus in a dictionary row.
-  const LEVEL_COL = { hsk3: 3, hsk2: 4 };
+  const LEVEL_COL = { hsk3: 3, hsk2: 4, jlpt: 3 };
   // Dictionary slots (see scripts/build-dict.mjs); ANY when the part of speech is unknown.
   const SLOT = { V: 0, N: 1, A: 2, F: 3, P: 4, ANY: -1 };
   const ANY_ORDER = [SLOT.P, SLOT.V, SLOT.N, SLOT.A, SLOT.F];
@@ -57,23 +57,34 @@
     const cache = new Map();
     const lexical = new Set(dict.lexical);
 
-    // Best translation in a list that the learner's level allows, or -1.
-    function first(ids) {
+    // Verbs that only take an object, or only go without one (Japanese 始める / 始まる).
+    const transitivity = new Map();
+    for (const id of dict.transitive || []) transitivity.set(id, 't');
+    for (const id of dict.intransitive || []) transitivity.set(id, 'i');
+
+    // Best translation in a list that the learner's level allows, or -1. valence: 't' when
+    // the English verb has an object, 'i' when it hasn't, '' to ignore; a verb of the other
+    // kind is only used when no better-fitting one is allowed.
+    function first(ids, valence = '') {
+      let fallback = -1;
       for (const id of ids) {
         const l = dict.words[id][col];
         if (l > 0 && l <= level) {
           // In "only my level" mode, skip words whose best translation is easier than
           // the level, rather than falling back to a worse translation at the level.
-          return settings.onlyLevel && l !== level ? -1 : id;
+          if (settings.onlyLevel && l !== level) return -1;
+          const v = transitivity.get(id);
+          if (!valence || !v || v === valence) return id;
+          if (fallback < 0) fallback = id;
         }
       }
-      return -1;
+      return fallback;
     }
 
-    function pick(key, slot) {
+    function pick(key, slot, valence) {
       if (!Object.hasOwn(dict.index, key)) return -1; // also rules out "constructor" etc.
       const slots = dict.index[key];
-      if (slot !== SLOT.ANY) return slots[slot] ? first(slots[slot]) : -1;
+      if (slot !== SLOT.ANY) return slots[slot] ? first(slots[slot], valence) : -1;
       for (const s of ANY_ORDER) {
         const id = slots[s] ? first(slots[s]) : -1;
         if (id >= 0) return id;
@@ -85,8 +96,8 @@
     // tagger ("bought" -> "buy"), or null to guess one from the spelling; order: which
     // forms to try, 'word' (word, then base), 'base' (base, then word) or 'plural' (the
     // base only, unless the plural is a word of its own like "glasses").
-    function lookup(word, allowLower, slot = SLOT.ANY, base = null, order = 'word') {
-      const ck = `${word}|${allowLower ? 1 : 0}|${slot}|${base || ''}|${order}`;
+    function lookup(word, allowLower, slot = SLOT.ANY, base = null, order = 'word', valence = '') {
+      const ck = `${word}|${allowLower ? 1 : 0}|${slot}|${base || ''}|${order}|${valence}`;
       if (cache.has(ck)) return cache.get(ck);
       const lower = word.toLowerCase();
       const exact = allowLower && lower !== word ? [word, lower] : [word];
@@ -98,13 +109,16 @@
       if (order === 'base') forms = [...new Set([...bases, ...exact])];
       else if (order === 'plural' && bases.length) forms = bases;
       let id = -1;
-      for (const f of forms) if ((id = pick(f, slot)) >= 0) break;
+      for (const f of forms) if ((id = pick(f, slot, valence)) >= 0) break;
       cache.set(ck, id);
       return id;
     }
 
-    // The id of an HSK word, for grammar rules that need a specific word (两 before a
-    // measure word).
+    // The grammar the dictionary's language needs (see scripts/build-dict-*.mjs).
+    lookup.grammar = dict.grammar;
+
+    // The id of a word, for grammar rules that need a specific one (两 before a measure
+    // word).
     let bySimplified = null;
     lookup.word = (simplified) => {
       bySimplified ||= new Map(dict.words.map((w, id) => [w[0], id]));
@@ -124,7 +138,7 @@
           break;
         }
       }
-      c ||= '个';
+      c ||= dict.grammar.defaultMeasure;
       return { suffix: c, suffixPinyin: dict.measure[c] || '' };
     };
     return lookup;
@@ -223,38 +237,60 @@
     // Verbs go by their base form ("works" -> work, not the noun "works" 著作), and plurals
     // by their singular only, as their own dictionary entries list rarer senses (plants -> 工厂).
     const order = info.slot === SLOT.V ? 'base' : info.slot === SLOT.N && info.plural ? 'plural' : 'word';
-    let id = lookup(tok.word, allowLower, info.slot, info.root, order);
+    // An object after the verb ("started a centre", "began trying") calls for a transitive
+    // verb, none ("began to spread", "it starts") for an intransitive one.
+    const afterNext = i + 2 < tokens.length ? tokens[i + 2] : null;
+    const hasObject = !!next?.info && (next.info.determiner || (!next.info.skip && [SLOT.N, SLOT.F, SLOT.A].includes(next.info.slot)) || next.info.gerund
+      || (next.word === 'to' && afterNext?.info?.slot === SLOT.V)); // "began to spread": 広がり始める
+    const valence = info.slot === SLOT.V ? (hasObject ? 't' : 'i') : '';
+    let id = lookup(tok.word, allowLower, info.slot, info.root, order, valence);
+    const grammar = lookup.grammar;
     // they/them/their: 他们 for people, 它们 for animals and things, and left in English
     // when the tagger can't tell what they refer to.
     if (info.human === null) return null;
     if (info.human === false && id >= 0) {
-      const it = lookup.word('它们');
+      const it = grammar.thingsPronoun ? lookup.word(grammar.thingsPronoun) : -1;
       if (!lookup.allowed(it)) return null;
       id = it;
     }
     // "Learning Chinese is hard": a gerund the tagger calls a noun may still only have a
     // verb translation (学习), and a verb gerund a noun one ("cooking" 烹饪). Only the -ing
     // form itself: "smoking" must not become the noun "smoke" (烟).
-    if (id < 0 && info.gerund) id = lookup(tok.word, allowLower, SLOT.N, tok.word.toLowerCase());
+    // Not when it has an object, though: "Building apps" is a verb even when the learner
+    // has no word for "build", and must not become the noun 建物.
+    if (id < 0 && info.gerund && !hasObject) id = lookup(tok.word, allowLower, SLOT.N, tok.word.toLowerCase());
     else if (id < 0 && tok.word.toLowerCase().endsWith('ing') && info.slot === SLOT.N) id = lookup(tok.word, allowLower, SLOT.V, null, 'base');
     if (id < 0) return null;
     const part = { id, orig: tok.word };
 
-    // "my friend" is 我的朋友, "people's lives" 人的生活.
-    if (info.possessive) Object.assign(part, { suffix: '的', suffixPinyin: 'de' });
-    // "highest" is 最高 and "better" 更好, unless the word already says so (最高, 更好).
-    if ((info.superlative || info.comparative) && info.slot === SLOT.A && !/^[最更较]/.test(lookup.hanzi(id))) {
-      Object.assign(part, info.superlative ? { prefix: '最', prefixPinyin: 'zuì' } : { prefix: '更', prefixPinyin: 'gèng' });
+    // "my friend" is 我的朋友 / 私の友達, "people's lives" 人的生活.
+    if (info.possessive) Object.assign(part, { suffix: grammar.possessive[0], suffixPinyin: grammar.possessive[1] });
+    // "highest" is 最高 / 一番高い and "better" 更好 / もっといい, unless the word already
+    // says so (最高, 更好).
+    // Only when the translation is the base adjective's: "better" -> 好 needs 更, but
+    // "later" has a word of its own (以后).
+    const marked = grammar.comparativeMarks && grammar.comparativeMarks.includes(lookup.hanzi(id)[0]);
+    const fromBase = () => {
+      const own = lookup(tok.word, allowLower, SLOT.A, lower);
+      return own < 0 || own === lookup(info.root, true, SLOT.A, info.root);
+    };
+    if ((info.superlative || info.comparative) && info.adjective && !marked && fromBase()) {
+      const [prefix, prefixPinyin] = info.superlative ? grammar.most : grammar.more;
+      Object.assign(part, { prefix, prefixPinyin });
     }
     // "three books" is 三本书: a number before a noun takes that noun's measure word.
+    // Languages without measure-word data (Japanese counters) leave such numbers English.
     if (info.number) {
       let k = i + 1;
       const joined = (j) => j < tokens.length && text.slice(tokens[j - 1].end, tokens[j].start) === ' ';
       if (joined(k) && tokens[k].info?.slot === SLOT.A) k++;
       const noun = joined(k) && tokens[k].info?.noun && !tokens[k].info.date ? tokens[k] : null;
+      if (noun && !grammar.measure) return null;
       if (noun) {
         Object.assign(part, lookup.measure(noun.word, noun.info.root));
-        if (lookup.word('二') === id && lookup.word('两') >= 0) part.id = lookup.word('两'); // 两本书, not 二本书
+        // 两本书, not 二本书
+        const [two, twoBefore] = grammar.two || [];
+        if (two && lookup.word(two) === id && lookup.word(twoBefore) >= 0) part.id = lookup.word(twoBefore);
       }
     }
     return { start: tok.start, end: tok.end, parts: [part] };

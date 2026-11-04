@@ -32,6 +32,8 @@
       date: tags.has('Date'),
       number: tags.has('Cardinal') && tags.has('TextValue'),
       particle: tags.has('Particle'),
+      adjective: tags.has('Adjective'),
+      determiner: tags.has('Determiner'),
       comparative: tags.has('Comparative'),
       superlative: tags.has('Superlative'),
     };

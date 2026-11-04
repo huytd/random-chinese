@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Random Chinese",
   "short_name": "Random Chinese",
-  "version": "0.1.0",
-  "description": "Learn Chinese while you browse: swaps a few English words on every page for HSK words at your level. Click one for pinyin, audio and meaning.",
+  "version": "0.2.0",
+  "description": "Learn Chinese or Japanese while you browse: swaps a few English words on every page for HSK or JLPT words at your level. Click one for the reading, audio and meaning.",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -21,11 +21,12 @@
   "background": {
     "service_worker": "src/background.js"
   },
-  "permissions": ["storage", "tts"],
+  "permissions": ["storage", "tts", "scripting"],
+  "host_permissions": ["http://*/*", "https://*/*"],
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["vendor/compromise.js", "src/tagger.js", "src/dict.js", "src/matcher.js", "src/settings.js", "src/content.js"],
+      "js": ["vendor/compromise.js", "src/tagger.js", "src/matcher.js", "src/settings.js", "src/content.js"],
       "css": ["src/content.css"],
       "run_at": "document_idle"
     }

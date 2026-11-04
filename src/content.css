@@ -15,6 +15,7 @@
 }
 .rc-word ruby {
   ruby-position: over;
+  ruby-align: center; /* don't spread 友達 to fit a longer reading */
 }
 .rc-word rt {
   font-size: 0.6em;

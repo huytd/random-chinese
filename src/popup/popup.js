@@ -2,11 +2,13 @@
 
 const { loadSettings, saveSettings, MAX_LEVEL } = globalThis.RC_SETTINGS;
 
-// Official cumulative vocabulary sizes, and the words each level adds.
+// Cumulative vocabulary sizes: official for HSK, from the word lists for JLPT.
 const WORDS = {
   hsk3: [500, 1272, 2245, 3245, 4316, 5456, 11092],
   hsk2: [150, 300, 600, 1200, 2500, 5000],
+  jlpt: [717, 1384, 3524, 5430, 8128],
 };
+const LANGUAGE_NAMES = { zh: 'Chinese', ja: 'Japanese' };
 
 const $ = (id) => document.getElementById(id);
 let settings;
@@ -17,33 +19,57 @@ function setRadio(group, value) {
   for (const b of group.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.value === String(value)));
 }
 
+// The level setting and its buttons for the current language: HSK 1-6 (+ 7-9), or
+// JLPT N5-N1 stored as 1-5.
+function levelInfo() {
+  if (settings.language === 'ja') {
+    return { key: 'jlptLevel', system: 'jlpt', max: 5, label: (n) => `N${6 - n}`, range: (n) => (n === 1 ? 'N5' : `N5–N${6 - n}`) };
+  }
+  return {
+    key: 'level',
+    system: settings.system,
+    max: MAX_LEVEL[settings.system],
+    label: (n) => (n === 7 ? '7–9' : String(n)),
+    range: (n) => `levels 1–${n === 7 ? '9' : n}`,
+  };
+}
+
 function render() {
+  const ja = settings.language === 'ja';
   document.body.classList.toggle('off', !settings.enabled);
   $('enabled').checked = settings.enabled;
+  setRadio($('language'), settings.language);
   setRadio($('system'), settings.system);
   setRadio($('script'), settings.script);
+  $('system').hidden = ja;
+  $('script-row').hidden = ja;
+  $('reading-label').textContent = ja ? 'Show furigana above words' : 'Show pinyin above words';
+  $('footer').textContent = `Click a ${LANGUAGE_NAMES[settings.language]} word on the page to hear it and see its meaning.`;
 
+  const info = levelInfo();
+  const level = settings[info.key];
   const levels = $('levels');
-  const max = MAX_LEVEL[settings.system];
-  levels.classList.toggle('six', max === 6);
-  levels.replaceChildren(...Array.from({ length: max }, (_, i) => {
+  levels.setAttribute('aria-label', ja ? 'JLPT level' : 'HSK level');
+  levels.classList.toggle('six', info.max === 6);
+  levels.classList.toggle('five', info.max === 5);
+  levels.replaceChildren(...Array.from({ length: info.max }, (_, i) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.setAttribute('role', 'radio');
     b.dataset.value = i + 1;
-    b.textContent = i === 6 ? '7–9' : String(i + 1);
-    if (i === 6) b.className = 'wide';
-    b.setAttribute('aria-label', `Level ${b.textContent}`);
+    b.textContent = info.label(i + 1);
+    if (b.textContent.length > 2) b.className = 'wide';
+    b.setAttribute('aria-label', ja ? `JLPT ${b.textContent}` : `Level ${b.textContent}`);
     return b;
   }));
-  setRadio(levels, settings.level);
+  setRadio(levels, level);
 
-  const sizes = WORDS[settings.system];
-  const n = settings.level - 1;
+  const sizes = WORDS[info.system];
+  const n = level - 1;
   const added = sizes[n] - (n ? sizes[n - 1] : 0);
   $('level-hint').textContent = settings.onlyLevel
     ? `Uses the ${added.toLocaleString()} words introduced at this level.`
-    : `Uses ${sizes[n].toLocaleString()} words, levels 1–${settings.level === 7 ? '9' : settings.level}.`;
+    : `Uses ${sizes[n].toLocaleString()} words, ${info.range(level)}.`;
   $('only-level').checked = settings.onlyLevel;
 
   $('frequency').value = settings.frequency;
@@ -73,7 +99,7 @@ async function refreshStatus() {
     if (!settings.enabled) $('site-status').textContent = 'Paused everywhere';
     else if (settings.disabledSites.includes(host)) $('site-status').textContent = 'Paused on this site';
     else if (!s.english) $('site-status').textContent = 'This page isn’t in English';
-    else $('site-status').textContent = `${s.count} word${s.count === 1 ? '' : 's'} in Chinese`;
+    else $('site-status').textContent = `${s.count} word${s.count === 1 ? '' : 's'} in ${LANGUAGE_NAMES[settings.language]}`;
   } catch {
     site.classList.add('unavailable');
     $('site-host').textContent = 'This page';
@@ -99,8 +125,12 @@ async function main() {
     // Level 7–9 only exists in HSK 3.0.
     if (b) update({ system: b.dataset.value, level: Math.min(settings.level, MAX_LEVEL[b.dataset.value]) });
   });
+  bindRadio($('language'), 'language');
   bindRadio($('script'), 'script');
-  bindRadio($('levels'), 'level', Number);
+  $('levels').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-value]');
+    if (b) update({ [levelInfo().key]: Number(b.dataset.value) });
+  });
   $('only-level').addEventListener('change', (e) => update({ onlyLevel: e.target.checked }));
   $('show-pinyin').addEventListener('change', (e) => update({ showPinyin: e.target.checked }));
   $('frequency').addEventListener('input', (e) => { $('frequency-value').textContent = `${e.target.value}%`; });

@@ -161,4 +161,4 @@ export const EXCLUDE = {
 
 // Inflected-looking words that must never be reduced to their base form. Words whose
 // translation shares no character with their base form's are detected automatically.
-export const LEXICAL = ['news', 'glasses', 'means', 'series', 'species', 'politics', 'physics', 'economics', 'works', 'goods', 'arms', 'customs', 'manners', 'clothes', 'savings', 'earnings', 'media'];
+export const LEXICAL = ['news', 'glasses', 'means', 'series', 'species', 'politics', 'physics', 'economics', 'works', 'goods', 'arms', 'customs', 'manners', 'clothes', 'savings', 'earnings', 'media', 'later', 'earlier'];

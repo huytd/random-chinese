@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 
 await import('../vendor/compromise.js');
 await import('../src/tagger.js');
-await import('../src/dict.js');
+await import('../src/dict-zh.js');
 await import('../src/matcher.js');
-const dict = globalThis.RC_DICT;
+const dict = globalThis.RC_DICTS.zh;
 const { lemmas, createLookup, findMatches } = globalThis.RC_MATCHER;
 const { tag } = globalThis.RC_TAGGER;
 
@@ -219,4 +219,9 @@ test('accented words and classifier glosses do not produce fragments', () => {
   const hsk2 = createLookup(dict, { system: 'hsk3', level: 2, onlyLevel: false });
   assert.ok(!rewrite('We met in cafés.', hsk6).includes('酒店'));
   assert.ok(!rewrite('She ate a cake.', hsk2).includes('块'));
+});
+
+test('comparatives with a word of their own get no 更', () => {
+  const hsk4 = createLookup(dict, { system: 'hsk3', level: 4, onlyLevel: false });
+  assert.equal(rewrite('Years later, she was happier.', hsk4), '年 以后, 她 was 更快乐.');
 });
